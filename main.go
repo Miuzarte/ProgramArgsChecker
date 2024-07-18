@@ -15,34 +15,35 @@ import (
 )
 
 const (
-	chromeCopyName = "chromeCopy.exe"
-	filtersName    = "filters.list"
+	copySuffix  = "_copy"
+	filtersName = "filters.list"
 )
 
 var (
 	user32          = syscall.MustLoadDLL("user32.dll")
 	procMessageBoxW = user32.MustFindProc("MessageBoxW")
-	xDir            string
-	origPath        string
-	copyPath        string
-	filtersPath     string
-	filters         []string
+
+	xDir        string
+	origPath    string
+	copyPath    string
+	filtersPath string
+	filters     []string
 )
 
 func init() {
+	// 获取可执行文件路径
 	d, err := os.Executable()
 	if err != nil {
-		MessageBox(0, "panic！无法获取可执行文件路径", err.Error(), 0)
+		msgBox(0, "panic！无法获取可执行文件路径", err.Error(), 0)
 		panic(err)
 	}
 	xDir = filepath.Dir(d)
-	origPath = filepath.Join(xDir, "chrome.exe")
-	copyPath = filepath.Join(xDir, chromeCopyName)
-	filtersPath = filepath.Join(xDir, filtersName)
 
+	// 读取过滤器
+	filtersPath = filepath.Join(xDir, filtersName)
 	filtersF, err := os.Open(filtersPath)
 	if err != nil {
-		MessageBox(0, fmt.Sprintf("panic！找不到%s", filtersPath), err.Error(), 0)
+		msgBox(0, fmt.Sprintf("panic！找不到%s", filtersPath), err.Error(), 0)
 		panic(err)
 	}
 	defer filtersF.Close()
@@ -51,94 +52,88 @@ func init() {
 		filters = append(filters, strings.TrimSpace(scanner.Text()))
 	}
 	if err := scanner.Err(); err != nil {
-		MessageBox(0, "panic！过滤器获取失败", err.Error(), 0)
+		msgBox(0, "panic！过滤器获取失败", err.Error(), 0)
 		panic(err)
 	}
 	if len(filters) == 0 {
-		MessageBox(0, "panic！过滤器为空", fmt.Sprintf("请检查%s", filtersPath), 0)
+		msgBox(0, "panic！过滤器为空", fmt.Sprintf("你都保护了什么啊\n请检查%s", filtersPath), 0)
+		os.Exit(1)
 	}
 
-	fmt.Println("过滤列表:")
-	for _, filter := range filters {
-		fmt.Println(filter)
-	}
-}
-
-func MessageBox(hwnd uintptr, title, caption string, flags uint) int {
-	c, _ := syscall.UTF16PtrFromString(caption)
-	t, _ := syscall.UTF16PtrFromString(title)
-	ret, _, _ := procMessageBoxW.Call(
-		hwnd,
-		uintptr(unsafe.Pointer(c)),
-		uintptr(unsafe.Pointer(t)),
-		uintptr(flags),
-	)
-	return int(ret)
+	// 获取目标程序文件名
+	// 0: self
+	// 1: debug destination
+	origProg := filepath.Base(os.Args[1])
+	origName := strings.TrimSuffix(origProg, ".exe")
+	// 拼接绝对路径
+	origPath = filepath.Join(xDir, origName+".exe")
+	fmt.Printf("目标程序:\n%s\n", origPath)
+	copyPath = filepath.Join(xDir, origName+copySuffix+".exe")
 }
 
 func main() {
-	// 除去前两个
+	// 除去自身和debug目标
 	args := os.Args[2:]
 
-	fmt.Println("调用方传参:")
+	fmt.Println("\n过滤列表:")
+	for _, filter := range filters {
+		fmt.Println(filter)
+	}
+	fmt.Println("\n调用方传参:")
 	for _, a := range args {
 		fmt.Println(a)
 	}
 
-	exists := false
+	// 匹配过滤
 	foundFilteredArgs := make([]string, 0)
-	// 检查参数
-loop:
 	for _, arg := range args {
 		for _, filter := range filters {
 			if arg == filter {
-				exists = true
 				foundFilteredArgs = append(foundFilteredArgs, arg)
-				break loop
 			}
 		}
 	}
 
-	if !exists {
+	if len(foundFilteredArgs) == 0 {
 		initAndRun(args)
 	} else {
 		ppid := syscall.Getppid()
+		list := strings.Join(foundFilteredArgs, "\n")
 		title := "发现黑名单参数:"
-		for _, a := range foundFilteredArgs {
-			title += " " + a
-		}
-		msg := fmt.Sprintf("调用方信息:\nPID: %d\n名称: %s", ppid, getProcessName(ppid))
-		fmt.Printf("%s\n%s\n", title, msg)
-		MessageBox(0, title, msg, 0)
+		msg := fmt.Sprintf("%s\n\n调用方信息:\nPID: %d\n名称: %s", list, ppid, getProcessName(ppid))
+		fmt.Printf("\n%s\n%s\n", title, msg)
+		msgBox(0, title, msg, 0)
 	}
 }
 
+// initAndRun 初始化并运行
 func initAndRun(args []string) {
-	if err := checkChromeCopy(); err != nil {
+	if err := checkCopy(); err != nil {
 		fmt.Println("初始化失败:\n", err)
-		MessageBox(0, "初始化失败", err.Error(), 0)
+		msgBox(0, "初始化失败", err.Error(), 0)
 		return
 	}
 
-	cmd := exec.Command(chromeCopyName, args...)
+	cmd := exec.Command(copyPath, args...)
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		fmt.Println("启动失败:\n", err)
-		MessageBox(0, "启动失败", err.Error(), 0)
+		msgBox(0, "启动失败", err.Error(), 0)
 	}
 }
 
-func checkChromeCopy() error {
+// checkCopy 检查副本
+func checkCopy() error {
 	copyFi, err := os.Stat(copyPath)
 	if err != nil {
-		fmt.Printf("%s不存在", chromeCopyName)
-		return copyChromeWithModTime()
+		fmt.Printf("%s不存在\n", copyPath)
+		return copyWithModTime()
 	}
 
 	origFi, err := os.Stat(origPath)
 	if err != nil {
-		return fmt.Errorf("找不到原chrome.exe: %s", err.Error())
+		return fmt.Errorf("找不到原%s: %s", filepath.Base(origPath), err.Error())
 	}
 
 	// 比较修改时间
@@ -151,15 +146,16 @@ func checkChromeCopy() error {
 			return err
 		}
 		if !isSame {
-			fmt.Println("chrome.exe已变更")
-			return copyChromeWithModTime()
+			fmt.Printf("%s已变更\n", filepath.Base(origPath))
+			return copyWithModTime()
 		}
 	}
 
 	return nil
 }
 
-func copyChromeWithModTime() error {
+// copyWithModTime 创建副本并尝试编辑修改时间
+func copyWithModTime() error {
 	origF, err := os.Open(origPath)
 	if err != nil {
 		return err
@@ -191,6 +187,7 @@ func copyChromeWithModTime() error {
 	return nil
 }
 
+// compareMD5 对比MD5
 func compareMD5() (bool, error) {
 	origMD5, err := calcMD5(origPath)
 	if err != nil {
@@ -205,6 +202,7 @@ func compareMD5() (bool, error) {
 	return string(origMD5) == string(copyMD5), nil
 }
 
+// calcMD5 计算MD5
 func calcMD5(filePath string) ([]byte, error) {
 	file, err := os.Open(filePath)
 	if err != nil {
@@ -220,18 +218,32 @@ func calcMD5(filePath string) ([]byte, error) {
 	return hasher.Sum(nil), nil
 }
 
+// msgBox 弹窗
+func msgBox(hwnd uintptr, title, caption string, flags uint) int {
+	c, _ := syscall.UTF16PtrFromString(caption)
+	t, _ := syscall.UTF16PtrFromString(title)
+	ret, _, _ := procMessageBoxW.Call(
+		hwnd,
+		uintptr(unsafe.Pointer(c)),
+		uintptr(unsafe.Pointer(t)),
+		uintptr(flags),
+	)
+	return int(ret)
+}
+
+// getProcessName 获取进程名
 func getProcessName(pid int) string {
 	output, err := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid)).Output()
 	if err != nil {
-		return "未知进程名称"
+		return "<未知>"
 	}
 	lines := strings.Split(string(output), "\n")
 	if len(lines) < 4 {
-		return "未知进程名称"
+		return "<未知>"
 	}
 	fields := strings.Fields(lines[3])
 	if len(fields) == 0 {
-		return "未知进程名称"
+		return "<未知>"
 	}
 	return fields[0]
 }
