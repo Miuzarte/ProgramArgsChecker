@@ -88,6 +88,8 @@ func main() {
 	foundFilteredArgs := make([]string, 0)
 	for _, arg := range args {
 		for _, filter := range filters {
+			arg = strings.ToLower(arg)
+			filter = strings.ToLower(filter)
 			if arg == filter {
 				foundFilteredArgs = append(foundFilteredArgs, arg)
 			}
