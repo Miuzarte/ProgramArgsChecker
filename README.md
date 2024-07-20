@@ -1,4 +1,5 @@
 # ProgramArgsChecker
+
 检查传入给程序的参数以实现阻止执行
 
 大小写不敏感
@@ -18,3 +19,5 @@
 程序会自动寻找同级目录的 `chrome.exe` 并检查过滤名单
 
 `filters.list` 内容按行分隔
+
+不存在 `filters.list` 时会直接执行，临时禁用可以直接移走

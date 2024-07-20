@@ -23,15 +23,19 @@ var (
 	user32          = syscall.MustLoadDLL("user32.dll")
 	procMessageBoxW = user32.MustFindProc("MessageBoxW")
 
-	xDir        string
-	origPath    string
-	copyPath    string
-	filtersPath string
-	filters     []string
+	origPath string
+	copyPath string
 )
 
-func init() {
-	// 获取可执行文件路径
+func main() {
+	var (
+		xDir        string   // 本体所在目录
+		args        []string // 调用方传参
+		filtersPath string   // 过滤器绝对路径
+		filters     []string // 过滤名单
+	)
+
+	// 获取本体可执行文件所在目录
 	d, err := os.Executable()
 	if err != nil {
 		msgBox(0, "panic！无法获取可执行文件路径", err.Error(), 0)
@@ -39,13 +43,35 @@ func init() {
 	}
 	xDir = filepath.Dir(d)
 
+	// 除去自身和debug目标
+	args = os.Args[2:]
+
+	fmt.Println("\n调用方传参:")
+	for _, a := range args {
+		fmt.Println(a)
+	}
+
+	// 获取目标程序文件名
+	// 0: self
+	// 1: debug destination
+	origProg := filepath.Base(os.Args[1])
+	origName := strings.TrimSuffix(origProg, ".exe")
+	// 拼接绝对路径
+	origPath = filepath.Join(xDir, origName+".exe")
+	fmt.Printf("目标程序:\n%s\n", origPath)
+	copyPath = filepath.Join(xDir, origName+copySuffix+".exe")
+
 	// 读取过滤器
 	filtersPath = filepath.Join(xDir, filtersName)
 	filtersF, err := os.Open(filtersPath)
 	if err != nil {
-		msgBox(0, fmt.Sprintf("panic！找不到%s", filtersPath), err.Error(), 0)
-		panic(err)
+		// msgBox(0, fmt.Sprintf("panic！找不到%s", filtersPath), err.Error(), 0)
+		// panic(err)
+		fmt.Println("找不到过滤器文件，将直接运行程序")
+		initAndRun(args)
+		os.Exit(0)
 	}
+
 	defer filtersF.Close()
 	scanner := bufio.NewScanner(filtersF)
 	for scanner.Scan() {
@@ -60,28 +86,9 @@ func init() {
 		os.Exit(1)
 	}
 
-	// 获取目标程序文件名
-	// 0: self
-	// 1: debug destination
-	origProg := filepath.Base(os.Args[1])
-	origName := strings.TrimSuffix(origProg, ".exe")
-	// 拼接绝对路径
-	origPath = filepath.Join(xDir, origName+".exe")
-	fmt.Printf("目标程序:\n%s\n", origPath)
-	copyPath = filepath.Join(xDir, origName+copySuffix+".exe")
-}
-
-func main() {
-	// 除去自身和debug目标
-	args := os.Args[2:]
-
 	fmt.Println("\n过滤列表:")
 	for _, filter := range filters {
 		fmt.Println(filter)
-	}
-	fmt.Println("\n调用方传参:")
-	for _, a := range args {
-		fmt.Println(a)
 	}
 
 	// 匹配过滤
